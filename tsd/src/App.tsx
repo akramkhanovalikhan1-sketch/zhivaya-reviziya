@@ -4,6 +4,7 @@ import { beepAlarm, beepOk } from "./audio";
 import { enqueueScan, flushQueue, readQueue } from "./queue";
 import { setScanHandler } from "./scanner";
 import AuthScreen from "./screens/AuthScreen";
+import DoneScreen, { type ZoneDone } from "./screens/DoneScreen";
 import ScanScreen from "./screens/ScanScreen";
 import ZoneScreen from "./screens/ZoneScreen";
 
@@ -17,11 +18,12 @@ export type Session = {
 };
 
 type Persisted = {
-  step: "auth" | "zone" | "scan";
+  step: "auth" | "zone" | "scan" | "done";
   userId: string;
   userName: string;
   zoneInput: string;
   session: Session | null;
+  done: ZoneDone | null;
 };
 
 const STATE_KEY = "tsdState";
@@ -39,6 +41,13 @@ function defaultBase() {
   return `${location.protocol}//${location.hostname}:8000`;
 }
 
+function armHref(baseUrl: string) {
+  const n = normalizeBaseUrl(baseUrl);
+  if (n) return n;
+  if (location.port === "5173") return `${location.protocol}//${location.hostname}:8000`;
+  return location.origin;
+}
+
 function loadState(): Persisted | null {
   try {
     const raw = localStorage.getItem(STATE_KEY);
@@ -51,13 +60,18 @@ function loadState(): Persisted | null {
 export default function App() {
   const restored = useMemo(() => loadState(), []);
   const [baseUrl, setBaseUrl] = useState(defaultBase);
-  const [step, setStep] = useState<"auth" | "zone" | "scan">(
-    restored?.step === "scan" && !restored.session ? "zone" : restored?.step || "auth",
+  const [step, setStep] = useState<"auth" | "zone" | "scan" | "done">(
+    restored?.step === "scan" && !restored.session
+      ? "zone"
+      : restored?.step === "done" && !restored.done
+        ? "zone"
+        : restored?.step || "auth",
   );
   const [userId, setUserId] = useState(restored?.userId || "");
   const [userName, setUserName] = useState(restored?.userName || "");
   const [zoneInput, setZoneInput] = useState(restored?.zoneInput || "");
   const [session, setSession] = useState<Session | null>(restored?.session || null);
+  const [done, setDone] = useState<ZoneDone | null>(restored?.done || null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [alarm, setAlarm] = useState(false);
@@ -274,11 +288,23 @@ export default function App() {
         return;
       }
       flash("ok");
+      setDone({
+        zoneId: res.zoneId || session.zoneId,
+        zoneName: res.zoneName || session.zoneName,
+        sessionNum: res.sessionNum || session.sessionNum,
+        message: res.message || "Зона закрыта. Виртуальный замок включён.",
+        lines: res.lines || lines,
+        closedZones: res.closedZones,
+        totalZones: res.totalZones,
+        coveragePercent: res.coveragePercent,
+      });
       setSession(null);
       setLines([]);
       setZoneInput("");
-      setStep("zone");
+      setStep("done");
       setLastName("Ожидание скана");
+      setLastQty(0);
+      setQtyInput("1");
       setNotice("");
       setError("");
     } catch {
@@ -323,9 +349,9 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(
       STATE_KEY,
-      JSON.stringify({ step, userId, userName, zoneInput, session } satisfies Persisted),
+      JSON.stringify({ step, userId, userName, zoneInput, session, done } satisfies Persisted),
     );
-  }, [step, userId, userName, zoneInput, session]);
+  }, [step, userId, userName, zoneInput, session, done]);
 
   useEffect(() => {
     const up = () => setOnline(true);
@@ -412,6 +438,7 @@ export default function App() {
   const header = useMemo(() => {
     if (step === "auth") return "Авторизация";
     if (step === "zone") return userName;
+    if (step === "done") return `${userName} · итог`;
     return `${userName} · ${session?.zoneId}`;
   }, [step, userName, session]);
 
@@ -465,6 +492,7 @@ export default function App() {
             setStep("auth");
             setUserId("");
             setUserName("");
+            setDone(null);
             setError("");
           }}
         />
@@ -485,6 +513,17 @@ export default function App() {
           onSendScan={sendScan}
           onUndo={undoLast}
           onFinish={finishZone}
+        />
+      )}
+      {step === "done" && done && (
+        <DoneScreen
+          done={done}
+          armHref={armHref(baseUrl)}
+          onNextZone={() => {
+            setDone(null);
+            setStep("zone");
+            setError("");
+          }}
         />
       )}
     </div>

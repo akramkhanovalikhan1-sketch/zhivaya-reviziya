@@ -140,6 +140,10 @@ body {
   gap: 12px;
   font-size: 15px;
 }
-.calc-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+a.btn {
+  display: block;
+  text-align: center;
+  text-decoration: none;
+}
 .calc-grid label { color: var(--muted); font-size: 12px; display: flex; flex-direction: column; gap: 6px; }
 h3 { margin: 0; }

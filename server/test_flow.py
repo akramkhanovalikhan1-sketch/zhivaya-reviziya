@@ -67,7 +67,7 @@ def main() -> None:
         "/finishZone",
         {"zoneId": "S-01", "userId": auth["userId"], "sessionNum": start["sessionNum"]},
     )
-    assert fin["ok"], fin
+    assert fin["ok"] and fin.get("lines"), fin
     preview = post("/startZone", {"zoneId": "S-01", "userId": auth["userId"], "confirmRecheck": False})
     assert preview.get("needsConfirm"), preview
     idle = post("/arm/closeIdle", {})

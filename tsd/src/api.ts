@@ -23,6 +23,18 @@ export type ScanLine = {
   lastBarcode?: string;
 };
 
+export type FinishZoneOk = {
+  ok: true;
+  zoneId?: string;
+  zoneName?: string;
+  sessionNum?: number;
+  lines?: ScanLine[];
+  closedZones?: number;
+  totalZones?: number;
+  coveragePercent?: number;
+  message?: string;
+};
+
 export type ScanOk = {
   ok: true;
   alarm: boolean;
@@ -121,7 +133,7 @@ export const api = {
     },
   ) => postJson<ScanOk | ScanFail>(base, "/hs/tsd/scanItem", payload),
   finishZone: (base: string, zoneId: string, userId: string, sessionNum: number) =>
-    postJson<{ ok: boolean; error?: string; message?: string }>(base, "/hs/tsd/finishZone", {
+    postJson<FinishZoneOk | { ok: false; error?: string; message?: string }>(base, "/hs/tsd/finishZone", {
       zoneId,
       userId,
       sessionNum,

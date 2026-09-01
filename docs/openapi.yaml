@@ -120,9 +120,24 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/OkResponse"
-
-  /arm/dashboard:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  message: { type: string }
+                  zoneId: { type: string }
+                  zoneName: { type: string }
+                  sessionNum: { type: integer }
+                  lines:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        sku: { type: string }
+                        name: { type: string }
+                        qty: { type: number }
+                  closedZones: { type: integer }
+                  totalZones: { type: integer }
+                  coveragePercent: { type: number }
     get:
       summary: Монитор покрытия зон и сводная таблица (для АРМ / mock)
       operationId: ArmDashboard

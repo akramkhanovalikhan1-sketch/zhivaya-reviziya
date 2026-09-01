@@ -530,8 +530,22 @@ def finish_zone(body: FinishZoneIn):
     zone["status"] = "closed"
     zone["color"] = "green"
     zone["finishTime"] = now().isoformat(timespec="milliseconds")
+    lines = session_lines(body.zoneId, body.sessionNum)
     archive_session(zone)
-    return {"ok": True, "message": f"Зона {zone['name']} закрыта. Виртуальный замок включён."}
+    work_zones = [z for z in db["zones"].values() if not z.get("quarantine")]
+    closed = sum(1 for z in work_zones if z["status"] == "closed")
+    total = len(work_zones)
+    return {
+        "ok": True,
+        "zoneId": zone["zoneId"],
+        "zoneName": zone["name"],
+        "sessionNum": zone["sessionNum"],
+        "lines": lines,
+        "closedZones": closed,
+        "totalZones": total,
+        "coveragePercent": round(100 * closed / total, 1) if total else 0,
+        "message": f"Зона {zone['name']} закрыта. Виртуальный замок включён.",
+    }
 
 
 @app.get("/hs/tsd/ping")
