@@ -1,0 +1,14 @@
+node_modules/
+dist/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.idea/
+.vscode/
+*.apk
+*.iml
+.DS_Store
+tsd/dist/
+server/*.db

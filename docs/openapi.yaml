@@ -1,0 +1,232 @@
+openapi: 3.0.3
+info:
+  title: Живая ревизия — HTTP API 1С
+  version: "1.0.0"
+  description: |
+    Контракт между ТСД (Алихан) и 1С:Розница (Айдын).
+    Базовый URL в 1С: http://{сервер}/{база}/hs/tsd
+    Mock: http://{хост}:8000/hs/tsd
+
+servers:
+  - url: http://localhost:8000/hs/tsd
+
+paths:
+  /auth:
+    post:
+      summary: Авторизация по штрихкоду бейджа
+      operationId: Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [barcode]
+              properties:
+                barcode: { type: string, example: "EMP-1001" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+
+  /startZone:
+    post:
+      summary: Фиксация времени старта зоны (лазер товаров разблокируется после успеха)
+      operationId: StartZone
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartZoneRequest"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StartZoneResponse"
+
+  /scanItem:
+    post:
+      summary: Сканирование товара. Ответ < 100 мс.
+      operationId: ScanItem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScanItemRequest"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanItemResponse"
+
+  /finishZone:
+    post:
+      summary: Закрыть зону (виртуальный замок)
+      operationId: FinishZone
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FinishZoneRequest"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+
+  /arm/dashboard:
+    get:
+      summary: Монитор покрытия зон и сводная таблица (для АРМ / mock)
+      operationId: ArmDashboard
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Dashboard"
+
+  /arm/recheck:
+    post:
+      summary: Направить зону на перепроверку
+      operationId: SendToRecheck
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [zoneId]
+              properties:
+                zoneId: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+
+components:
+  schemas:
+    AuthResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+        userId: { type: string }
+        userName: { type: string }
+        error: { type: string }
+        message: { type: string }
+
+    StartZoneRequest:
+      type: object
+      required: [zoneId, userId]
+      properties:
+        zoneId: { type: string, example: "S-01" }
+        sessionNum: { type: integer, default: 0, description: "0 = сервер назначит сам" }
+        userId: { type: string }
+
+    StartZoneResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+        zoneId: { type: string }
+        zoneName: { type: string }
+        sessionNum: { type: integer }
+        startTime: { type: string, format: date-time }
+        recheck: { type: boolean }
+        previousUserName: { type: string }
+        message: { type: string }
+        error: { type: string }
+
+    ScanItemRequest:
+      type: object
+      required: [barcode, zoneId, qty, userId, sessionNum]
+      properties:
+        barcode: { type: string }
+        zoneId: { type: string }
+        qty: { type: number, format: double }
+        userId: { type: string }
+        sessionNum: { type: integer }
+        deviceId: { type: string }
+
+    ScanItemResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+        alarm: { type: boolean, description: "ТСД мигает красным и пищит" }
+        name: { type: string }
+        sku: { type: string }
+        qty: { type: number }
+        warning: { type: string, enum: [duplicate_card, null] }
+        message: { type: string }
+        error: { type: string }
+
+    FinishZoneRequest:
+      type: object
+      required: [zoneId, userId, sessionNum]
+      properties:
+        zoneId: { type: string }
+        userId: { type: string }
+        sessionNum: { type: integer }
+
+    OkResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+        error: { type: string }
+        message: { type: string }
+
+    Dashboard:
+      type: object
+      properties:
+        canFinalize: { type: boolean }
+        coveragePercent: { type: number }
+        zones:
+          type: array
+          items:
+            type: object
+            properties:
+              zoneId: { type: string }
+              name: { type: string }
+              status: { type: string, enum: [idle, active, closed, recheck] }
+              color: { type: string, enum: [gray, yellow, green, orange] }
+              userName: { type: string }
+              sessionNum: { type: integer }
+              startTime: { type: string }
+              finishTime: { type: string }
+        lines:
+          type: array
+          items:
+            type: object
+            properties:
+              sku: { type: string }
+              name: { type: string }
+              plan: { type: number }
+              factTsd: { type: number }
+              soldAfterStart: { type: number }
+              adjustedFact: { type: number }
+              deviation: { type: number }
+        candidates:
+          type: array
+          items:
+            type: object
+            properties:
+              a: { type: string }
+              b: { type: string }
+              qty: { type: number }
+              reason: { type: string }
+        transitWarnings:
+          type: array
+          items:
+            type: object
+            properties:
+              document: { type: string }
+              sku: { type: string }
+              message: { type: string }

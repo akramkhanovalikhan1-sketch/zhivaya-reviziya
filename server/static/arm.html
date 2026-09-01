@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>АРМ руководителя ревизии</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --card: #1a222c;
+      --line: #2a3544;
+      --text: #e8eef6;
+      --muted: #8b9cb3;
+      --gray: #6b7280;
+      --yellow: #eab308;
+      --green: #22c55e;
+      --orange: #f97316;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--line);
+      background: #12181f;
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
+    h1 { margin: 0; font-size: 18px; font-weight: 650; }
+    .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+    .actions { display: flex; gap: 8px; align-items: center; }
+    button {
+      border: 0;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-weight: 650;
+      cursor: pointer;
+      color: #fff;
+    }
+    .btn-final { background: #16a34a; }
+    .btn-final:disabled { background: #334155; color: #94a3b8; cursor: not-allowed; }
+    .btn-ghost { background: #334155; }
+    main { padding: 20px 24px 48px; display: grid; gap: 24px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 10px;
+    }
+    .zone {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      border-left: 6px solid var(--gray);
+    }
+    .zone.gray { border-left-color: var(--gray); }
+    .zone.yellow { border-left-color: var(--yellow); }
+    .zone.green { border-left-color: var(--green); }
+    .zone.orange { border-left-color: var(--orange); }
+    .zone b { display: block; margin-bottom: 4px; }
+    .zone span { color: var(--muted); font-size: 12px; }
+    .legend { display: flex; gap: 16px; flex-wrap: wrap; color: var(--muted); font-size: 13px; }
+    .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+    table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 12px; overflow: hidden; }
+    th, td { padding: 10px 12px; text-align: right; border-bottom: 1px solid var(--line); font-size: 13px; }
+    th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+    th { color: var(--muted); font-weight: 600; background: #151c24; }
+    .neg { color: #f87171; }
+    .pos { color: #4ade80; }
+    .warn { background: #3b2a12; border: 1px solid #854d0e; border-radius: 10px; padding: 12px; }
+    .link { background: transparent; color: #93c5fd; padding: 0; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Живая ревизия — АРМ товароведа</h1>
+      <div class="sub" id="meta">Загрузка…</div>
+    </div>
+    <div class="actions">
+      <button class="btn-ghost" onclick="resetDemo()">Сбросить демо</button>
+      <button class="btn-final" id="finalBtn" disabled>Сформировать финальные акты ревизии</button>
+    </div>
+  </header>
+  <main>
+    <section>
+      <div class="legend" style="margin-bottom:12px">
+        <span><i class="dot" style="background:#6b7280"></i>Серый — не подходили</span>
+        <span><i class="dot" style="background:#eab308"></i>Жёлтый — считают сейчас</span>
+        <span><i class="dot" style="background:#22c55e"></i>Зелёный — зона закрыта</span>
+        <span><i class="dot" style="background:#f97316"></i>Оранжевый — перепроверка</span>
+      </div>
+      <div class="grid" id="zones"></div>
+    </section>
+    <section>
+      <h2 style="font-size:16px">Сводная таблица (онлайн)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>SKU</th>
+            <th>Товар</th>
+            <th>План 1С</th>
+            <th>Факт ТСД</th>
+            <th>Продано после Старта</th>
+            <th>Итоговый факт</th>
+            <th>Отклонение</th>
+          </tr>
+        </thead>
+        <tbody id="lines"></tbody>
+      </table>
+    </section>
+    <section id="extra"></section>
+  </main>
+  <script>
+    const API = "/hs/tsd/arm";
+
+    async function load() {
+      const d = await fetch(API + "/dashboard").then(r => r.json());
+      document.getElementById("meta").textContent =
+        `Покрытие ${d.coveragePercent}%  ·  ${d.zones.filter(z => z.status === "closed").length}/${d.zones.length} зон закрыто`;
+      const btn = document.getElementById("finalBtn");
+      btn.disabled = !d.canFinalize;
+
+      document.getElementById("zones").innerHTML = d.zones.map(z => `
+        <div class="zone ${z.color}">
+          <b>${z.zoneId}</b>
+          <span>${z.name}</span><br>
+          <span>${z.userName || "—"}${z.sessionNum ? " · сессия " + z.sessionNum : ""}</span>
+          ${z.status === "closed" ? `<br><button class="link" onclick="recheck('${z.zoneId}')">Направить на перепроверку</button>` : ""}
+        </div>
+      `).join("");
+
+      document.getElementById("lines").innerHTML = d.lines.map(r => `
+        <tr>
+          <td>${r.sku}</td>
+          <td>${r.name}</td>
+          <td>${r.plan}</td>
+          <td>${r.factTsd}</td>
+          <td>${r.soldAfterStart}</td>
+          <td>${r.adjustedFact}</td>
+          <td class="${r.deviation < 0 ? "neg" : r.deviation > 0 ? "pos" : ""}">${r.deviation}</td>
+        </tr>
+      `).join("");
+
+      let extra = "";
+      if (d.candidates.length) {
+        extra += "<h2 style='font-size:16px'>Кандидаты на пересортицу</h2>";
+        extra += d.candidates.map(c => `<div class="warn">${c.a} ↔ ${c.b} · ${c.qty} шт · ${c.reason}</div>`).join("");
+      }
+      if (d.transitWarnings.length) {
+        extra += "<h2 style='font-size:16px'>Предупреждения РЦ</h2>";
+        extra += d.transitWarnings.map(t => `<div class="warn">${t.message}</div>`).join("");
+      }
+      document.getElementById("extra").innerHTML = extra;
+    }
+
+    async function recheck(zoneId) {
+      await fetch(API + "/recheck", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ zoneId })
+      });
+      load();
+    }
+    async function resetDemo() {
+      await fetch(API + "/reset", { method: "POST" });
+      load();
+    }
+    load();
+    setInterval(load, 1500);
+  </script>
+</body>
+</html>
