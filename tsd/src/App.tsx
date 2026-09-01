@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type StartZoneOk } from "./api";
+import { api, type ScanLine, type StartZoneOk } from "./api";
 import { beepAlarm, beepOk } from "./audio";
 import { enqueueScan, flushQueue, readQueue } from "./queue";
 import { setScanHandler } from "./scanner";
@@ -35,7 +35,7 @@ const DEVICE_ID = localStorage.getItem("tsdDeviceId") || (() => {
 function defaultBase() {
   const saved = localStorage.getItem("tsdServer");
   if (saved) return saved;
-  if (location.port === "5173") return "";
+  if (location.port === "5173" || location.pathname.startsWith("/tsd")) return "";
   return `${location.protocol}//${location.hostname}:8000`;
 }
 
@@ -68,8 +68,32 @@ export default function App() {
   const [qtyInput, setQtyInput] = useState("1");
   const [online, setOnline] = useState(navigator.onLine);
   const [queued, setQueued] = useState(() => readQueue().length);
+  const [lines, setLines] = useState<ScanLine[]>([]);
 
   const trapRef = useRef<HTMLInputElement>(null);
+
+  function applyLines(next: ScanLine[] | undefined) {
+    if (!next) return;
+    setLines(next);
+    const last = next[next.length - 1];
+    if (last) {
+      setLastName(last.name);
+      setLastQty(last.qty);
+      setLastBarcode(last.lastBarcode || null);
+    } else {
+      setLastName("Сканируйте товар");
+      setLastQty(0);
+      setLastBarcode(null);
+    }
+  }
+
+  function dropBrokenSession(message: string) {
+    flash("alarm");
+    setSession(null);
+    setLines([]);
+    setStep("zone");
+    setError(message);
+  }
 
   const flash = (kind: "ok" | "alarm") => {
     if (kind === "alarm") {
@@ -117,6 +141,7 @@ export default function App() {
     setLastName("Сканируйте товар");
     setLastQty(0);
     setLastBarcode(null);
+    setLines([]);
     setQtyInput("1");
     setNotice(res.freezeUntil && res.message && !res.recheck ? res.message : "");
     setOnline(true);
@@ -171,6 +196,11 @@ export default function App() {
         deviceId: DEVICE_ID,
       });
       if (!res.ok || res.alarm) {
+        const code = "error" in res ? res.error : "";
+        if (code === "session_mismatch" || code === "zone_not_started") {
+          dropBrokenSession(("message" in res && res.message) || "Сессия зоны устарела");
+          return;
+        }
         flash("alarm");
         setError(("message" in res && res.message) || "Ошибка сканирования");
         return;
@@ -181,6 +211,7 @@ export default function App() {
       setLastQty((prev) => (lastBarcode === barcode ? prev + res.qty : res.qty));
       setLastBarcode(barcode);
       setQtyInput("1");
+      if (res.lines) applyLines(res.lines);
       if (res.warning === "duplicate_card" && res.message) setNotice(res.message);
       const flushed = await flushQueue(baseUrl);
       if (flushed.sent) setQueued(flushed.left);
@@ -225,6 +256,7 @@ export default function App() {
       }
       flash("ok");
       setSession(null);
+      setLines([]);
       setZoneInput("");
       setStep("zone");
       setLastName("Ожидание скана");
@@ -232,6 +264,28 @@ export default function App() {
       setError("");
     } catch {
       flash("alarm");
+      setError("Нет связи с сервером 1С");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function undoLast() {
+    if (!session || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const res = await api.undoLast(baseUrl, session.zoneId, session.userId, session.sessionNum);
+      if (!res.ok) {
+        flash("alarm");
+        setError(res.message || "Нечего отменять");
+        return;
+      }
+      flash("ok");
+      applyLines(res.lines || []);
+    } catch {
+      flash("alarm");
+      setOnline(false);
       setError("Нет связи с сервером 1С");
     } finally {
       setBusy(false);
@@ -265,9 +319,19 @@ export default function App() {
     let stop = false;
     const tick = async () => {
       if (stop || busy) return;
+      try {
+        await api.ping(baseUrl);
+        setOnline(true);
+      } catch {
+        setOnline(false);
+        return;
+      }
       const flushed = await flushQueue(baseUrl);
       if (flushed.sent || flushed.left !== queued) setQueued(flushed.left);
-      if (flushed.lastName) setLastName(flushed.lastName);
+      if (flushed.sent) {
+        const fresh = await api.sessionLines(baseUrl, session.zoneId, session.sessionNum);
+        if (fresh.ok) applyLines(fresh.lines);
+      } else if (flushed.lastName) setLastName(flushed.lastName);
     };
     void tick();
     const id = window.setInterval(() => void tick(), 3000);
@@ -276,6 +340,22 @@ export default function App() {
       window.clearInterval(id);
     };
   }, [baseUrl, session, online, busy, queued]);
+
+  useEffect(() => {
+    if (!session || step !== "scan") return;
+    let stop = false;
+    void api.sessionLines(baseUrl, session.zoneId, session.sessionNum).then((res) => {
+      if (stop) return;
+      if (!res.ok) {
+        dropBrokenSession(res.message || "Сессия зоны устарела");
+        return;
+      }
+      applyLines(res.lines);
+    }).catch(() => setOnline(false));
+    return () => {
+      stop = true;
+    };
+  }, [baseUrl, session?.zoneId, session?.sessionNum, step]);
 
   useEffect(() => {
     trapRef.current?.focus();
@@ -363,8 +443,10 @@ export default function App() {
           error={error}
           notice={notice}
           queued={queued}
+          lines={lines}
           onApplyMultiplier={applyMultiplier}
           onSendScan={sendScan}
+          onUndo={undoLast}
           onFinish={finishZone}
         />
       )}

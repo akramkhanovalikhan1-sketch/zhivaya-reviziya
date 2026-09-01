@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { ScanLine } from "../api";
 import type { Session } from "../App";
 
 type Props = {
@@ -11,8 +12,10 @@ type Props = {
   error: string;
   notice: string;
   queued: number;
+  lines: ScanLine[];
   onApplyMultiplier: (total: number) => void;
   onSendScan: (barcode: string, qty: number) => void;
+  onUndo: () => void;
   onFinish: () => void;
 };
 
@@ -26,8 +29,10 @@ export default function ScanScreen({
   error,
   notice,
   queued,
+  lines,
   onApplyMultiplier,
   onSendScan,
+  onUndo,
   onFinish,
 }: Props) {
   const [calc, setCalc] = useState(false);
@@ -96,6 +101,20 @@ export default function ScanScreen({
       {queued > 0 && <div className="warn">В очереди без сети: {queued} скан(ов). Уйдут сами.</div>}
       {notice && <div className="warn">{notice}</div>}
       {error && <div className="err">{error}</div>}
+
+      {lines.length > 0 && (
+        <div className="lines">
+          {lines.map((row) => (
+            <div className="line-row" key={row.sku}>
+              <span>{row.name}</span>
+              <b>{row.qty}</b>
+            </div>
+          ))}
+          <button className="btn btn-ghost" type="button" disabled={busy} onClick={onUndo}>
+            Отменить последний скан
+          </button>
+        </div>
+      )}
 
       <button className="btn btn-red huge" type="button" disabled={busy} onClick={onFinish}>
         ЗАВЕРШИТЬ И ЗАКРЫТЬ ЗОНУ

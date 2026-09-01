@@ -63,6 +63,16 @@ class TransitIn(BaseModel):
     document: str
 
 
+class UndoIn(BaseModel):
+    zoneId: str
+    userId: str
+    sessionNum: int
+
+
+class CloseIdleIn(BaseModel):
+    zoneId: str | None = None
+
+
 EMPLOYEES = {
     "EMP-1001": {"id": "u-ivanov", "name": "Иванов И.И."},
     "EMP-1002": {"id": "u-sidorov", "name": "Сидоров П.П."},
@@ -202,8 +212,11 @@ app.add_middleware(
 )
 
 STATIC = Path(__file__).parent / "static"
+TSD_DIST = Path(__file__).resolve().parent.parent / "tsd" / "dist"
 if STATIC.exists():
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
+if TSD_DIST.exists():
+    app.mount("/tsd", StaticFiles(directory=TSD_DIST, html=True), name="tsd-app")
 
 
 @app.get("/")
@@ -286,6 +299,24 @@ def transit_cut(sku: str) -> float:
         if doc["sku"] == sku and doc["posted"] and doc["sku"] not in scanned:
             cut += doc["qty"]
     return cut
+
+
+def session_lines(zone_id: str, session_num: int) -> list[dict]:
+    totals: dict[str, dict] = {}
+    for scan in db["scans"]:
+        if scan["zoneId"] != zone_id or scan["sessionNum"] != session_num:
+            continue
+        sku = scan["sku"]
+        if sku not in totals:
+            totals[sku] = {
+                "sku": sku,
+                "name": SKU_META.get(sku, {}).get("name", sku),
+                "qty": 0.0,
+                "lastBarcode": scan["barcode"],
+            }
+        totals[sku]["qty"] += scan["qty"]
+        totals[sku]["lastBarcode"] = scan["barcode"]
+    return list(totals.values())
 
 
 def home_zone_for(sku: str) -> dict | None:
@@ -450,26 +481,23 @@ def scan_item(body: ScanItemIn):
     if product.get("bulk"):
         extra = " Крупногабарит: лучше калькулятор рядов."
 
-    if is_dup:
-        return {
-            "ok": True,
-            "alarm": False,
-            "name": product["name"],
-            "sku": product["sku"],
-            "qty": body.qty,
-            "warning": "duplicate_card",
-            "message": f"Это дубликат. Считаем в общую кучу к основному товару: {product['name']}",
-        }
-
-    return {
+    lines = session_lines(body.zoneId, body.sessionNum)
+    payload = {
         "ok": True,
         "alarm": False,
         "name": product["name"],
         "sku": product["sku"],
         "qty": body.qty,
-        "warning": None,
-        "message": extra.strip() or None,
+        "lines": lines,
     }
+    if is_dup:
+        payload["warning"] = "duplicate_card"
+        payload["message"] = f"Это дубликат. Считаем в общую кучу к основному товару: {product['name']}"
+        return payload
+
+    payload["warning"] = None
+    payload["message"] = extra.strip() or None
+    return payload
 
 
 @app.post("/hs/tsd/finishZone")
@@ -487,6 +515,69 @@ def finish_zone(body: FinishZoneIn):
     zone["finishTime"] = now().isoformat(timespec="milliseconds")
     archive_session(zone)
     return {"ok": True, "message": f"Зона {zone['name']} закрыта. Виртуальный замок включён."}
+
+
+@app.get("/hs/tsd/ping")
+def ping():
+    return {"ok": True, "time": now().isoformat(timespec="seconds")}
+
+
+@app.get("/hs/tsd/sessionLines")
+def get_session_lines(zoneId: str, sessionNum: int):
+    zone = db["zones"].get(zoneId)
+    if not zone:
+        return {"ok": False, "error": "unknown_zone", "lines": []}
+    if zone["sessionNum"] != sessionNum or zone["status"] != "active":
+        return {"ok": False, "error": "session_mismatch", "message": "Сессия зоны устарела", "lines": []}
+    return {"ok": True, "lines": session_lines(zoneId, sessionNum)}
+
+
+@app.post("/hs/tsd/undoLast")
+def undo_last(body: UndoIn):
+    zone = db["zones"].get(body.zoneId)
+    if not zone or zone["status"] != "active":
+        return {"ok": False, "error": "zone_not_started", "message": "Зона не в работе", "lines": []}
+    if zone["userId"] != body.userId or zone["sessionNum"] != body.sessionNum:
+        return {"ok": False, "error": "session_mismatch", "message": "Чужая сессия", "lines": []}
+    for i in range(len(db["scans"]) - 1, -1, -1):
+        scan = db["scans"][i]
+        if scan["zoneId"] == body.zoneId and scan["sessionNum"] == body.sessionNum and scan["userId"] == body.userId:
+            removed = db["scans"].pop(i)
+            return {
+                "ok": True,
+                "removed": {"sku": removed["sku"], "qty": removed["qty"]},
+                "lines": session_lines(body.zoneId, body.sessionNum),
+            }
+    return {"ok": False, "error": "empty", "message": "Нет скана для отмены", "lines": []}
+
+
+def close_idle_zone(zone: dict) -> bool:
+    if zone.get("quarantine") or zone["status"] != "idle" or db["finalized"]:
+        return False
+    zone["status"] = "closed"
+    zone["color"] = "green"
+    zone["finishTime"] = now().isoformat(timespec="milliseconds")
+    zone["userName"] = zone["userName"] or "пусто (АРМ)"
+    return True
+
+
+@app.post("/hs/tsd/arm/closeIdle")
+def close_idle(body: CloseIdleIn | None = None):
+    body = body or CloseIdleIn()
+    closed = 0
+    if body.zoneId:
+        zone = db["zones"].get(body.zoneId.strip().upper()) or db["zones"].get(body.zoneId)
+        if not zone:
+            return {"ok": False, "error": "unknown_zone", "message": "Зона не найдена"}
+        if close_idle_zone(zone):
+            closed = 1
+        elif zone["status"] != "idle":
+            return {"ok": False, "error": "not_idle", "message": "Закрыть пустой можно только серую зону"}
+    else:
+        for zone in db["zones"].values():
+            if close_idle_zone(zone):
+                closed += 1
+    return {"ok": True, "closed": closed, "message": f"Закрыто пустых зон: {closed}"}
 
 
 @app.post("/hs/tsd/arm/recheck")
@@ -624,6 +715,7 @@ def comparison_report() -> list[dict]:
 def dashboard():
     work_zones = [z for z in db["zones"].values() if not z.get("quarantine")]
     closed = sum(1 for z in work_zones if z["status"] == "closed")
+    idle = sum(1 for z in work_zones if z["status"] == "idle")
     total = len(work_zones)
     lines = list(fact_by_sku().values())
     auto, manual = resorting_pairs(lines)
@@ -660,6 +752,7 @@ def dashboard():
     return {
         "canFinalize": closed == total and total > 0 and not db["finalized"],
         "finalized": db["finalized"],
+        "idleCount": idle,
         "acts": db["acts"],
         "coveragePercent": round(100 * closed / total, 1) if total else 0,
         "zones": [

@@ -48,9 +48,16 @@ npm install
 npm run dev
 ```
 
+Либо одной командой из корня:
+
+```
+powershell -File start-demo.ps1
+```
+
 - ТСД: http://localhost:5173
 - АРМ товароведа: http://localhost:8000
 - Swagger mock: http://localhost:8000/docs
+- Сборка ТСД в тот же сервер: `cd tsd && npm run build` → http://localhost:8000/tsd/
 
 Демо: бейдж `EMP-1001`, зона `S-01`, дрель `4600000000017`, дубль крепежа `4600000000048`, цемент `4600000000024`.
 

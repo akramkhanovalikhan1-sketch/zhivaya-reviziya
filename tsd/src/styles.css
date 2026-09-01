@@ -125,6 +125,21 @@ body {
   flex-direction: column;
   gap: 10px;
 }
+.lines {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.line-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 15px;
+}
 .calc-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
 .calc-grid label { color: var(--muted); font-size: 12px; display: flex; flex-direction: column; gap: 6px; }
 h3 { margin: 0; }

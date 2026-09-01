@@ -61,11 +61,13 @@
     <div>
       <h1>Живая ревизия — АРМ товароведа</h1>
       <div class="sub" id="meta">Загрузка…</div>
+      <div class="sub"><a class="link" href="http://localhost:5173" target="_blank">Открыть ТСД</a></div>
     </div>
     <div class="actions">
       <button class="btn-sale" onclick="sale('DRL-18')">Пробить дрель на кассе</button>
       <button class="btn-sale" onclick="sale('SCR-35')">Пробить саморез</button>
       <button class="btn-ghost" onclick="applyOffset()">Автозачет пересортицы</button>
+      <button class="btn-ghost" onclick="closeIdle()">Закрыть неначатые зоны</button>
       <button class="btn-ghost" onclick="resetDemo()">Сбросить демо</button>
       <button class="btn-final" id="finalBtn" disabled>Сформировать финальные акты ревизии</button>
     </div>
@@ -109,6 +111,7 @@
       const work = d.zones.filter(z => !z.quarantine).length;
       document.getElementById("meta").textContent =
         `Покрытие ${d.coveragePercent}%  ·  ${closed}/${work} зон закрыто` +
+        (d.idleCount ? `  ·  серых ${d.idleCount}` : "") +
         (d.finalized ? "  ·  акты сформированы" : "");
       const btn = document.getElementById("finalBtn");
       btn.disabled = !d.canFinalize;
@@ -120,6 +123,7 @@
           <span>${z.name}</span><br>
           <span>${z.userName || "—"}${z.sessionNum ? " · сессия " + z.sessionNum : ""}</span>
           ${z.status === "closed" && !d.finalized ? `<br><button class="link" onclick="recheck('${z.zoneId}')">Направить на перепроверку</button>` : ""}
+          ${z.status === "idle" && !z.quarantine && !d.finalized ? `<br><button class="link" onclick="closeIdleOne('${z.zoneId}')">Закрыть пустой</button>` : ""}
         </div>
       `).join("");
 
@@ -182,6 +186,14 @@
       document.getElementById("extra").innerHTML = extra;
     }
 
+    async function closeIdle() {
+      await fetch(API + "/closeIdle", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+      load();
+    }
+    async function closeIdleOne(zoneId) {
+      await fetch(API + "/closeIdle", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ zoneId }) });
+      load();
+    }
     async function recheck(zoneId) {
       await fetch(API + "/recheck", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ zoneId }) });
       load();
@@ -196,13 +208,11 @@
       load();
     }
     async function applyOffset() {
-      const r = await fetch(API + "/applyOffset", { method: "POST" }).then(x => x.json());
-      alert(r.message || "Готово");
+      await fetch(API + "/applyOffset", { method: "POST" });
       load();
     }
     async function finalize() {
-      const r = await fetch(API + "/finalize", { method: "POST" }).then(x => x.json());
-      alert(r.message || r.error);
+      await fetch(API + "/finalize", { method: "POST" });
       load();
     }
     async function resetDemo() {

@@ -65,6 +65,38 @@ paths:
               schema:
                 $ref: "#/components/schemas/ScanItemResponse"
 
+  /ping:
+    get:
+      summary: Проверка связи ТСД с сервером
+      operationId: Ping
+  /sessionLines:
+    get:
+      summary: Итог сканов текущей сессии зоны
+      operationId: SessionLines
+      parameters:
+        - in: query
+          name: zoneId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: sessionNum
+          required: true
+          schema: { type: integer }
+  /undoLast:
+    post:
+      summary: Отменить последний скан текущей сессии
+      operationId: UndoLast
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [zoneId, userId, sessionNum]
+              properties:
+                zoneId: { type: string }
+                userId: { type: string }
+                sessionNum: { type: integer }
   /finishZone:
     post:
       summary: Закрыть зону (виртуальный замок)
@@ -111,6 +143,16 @@ paths:
   /arm/applyOffset:
     post:
       summary: Автозачет пересортицы с одинаковой ценой
+  /arm/closeIdle:
+    post:
+      summary: Закрыть серые (неначатые) зоны как пустые. Нужно, чтобы дойти до 100% покрытия.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                zoneId: { type: string, description: "Если пусто — закрыть все серые рабочие зоны" }
   /arm/finalize:
     post:
       summary: Финальные акты. Доступно только при 100% зелёных рабочих зон
