@@ -1,6 +1,10 @@
-import { FormEvent } from "react";
+import { FormEvent, useEffect, useState } from "react";
+import { api } from "../api";
+
+type Zone = { zoneId: string; name: string; status: string; quarantine?: boolean };
 
 type Props = {
+  baseUrl: string;
   zone: string;
   onZone: (v: string) => void;
   busy: boolean;
@@ -9,11 +13,32 @@ type Props = {
   onLogout: () => void;
 };
 
-export default function ZoneScreen({ zone, onZone, busy, error, onStart, onLogout }: Props) {
+export default function ZoneScreen({ baseUrl, zone, onZone, busy, error, onStart, onLogout }: Props) {
+  const [zones, setZones] = useState<Zone[]>([]);
+
+  useEffect(() => {
+    let stop = false;
+    void api.zones(baseUrl).then((res) => {
+      if (!stop && res.ok) setZones(res.zones);
+    }).catch(() => undefined);
+    return () => {
+      stop = true;
+    };
+  }, [baseUrl]);
+
   function onForm(e: FormEvent) {
     e.preventDefault();
     onStart(zone);
   }
+
+  const chips: Zone[] = zones.length
+    ? zones
+    : ["S-01", "S-02", "S-03", "P-01", "P-02", "Q-RC"].map((id) => ({
+        zoneId: id,
+        name: id,
+        status: "idle",
+        quarantine: id === "Q-RC",
+      }));
 
   return (
     <form className="screen" onSubmit={onForm}>
@@ -34,10 +59,17 @@ export default function ZoneScreen({ zone, onZone, busy, error, onStart, onLogou
       </button>
       {error && <div className="err">{error}</div>}
       <p className="demo">
-        Демо-зоны:{" "}
-        {["S-01", "S-02", "S-03", "P-01", "P-02", "Q-RC"].map((z) => (
-          <button key={z} type="button" className="chip" onClick={() => onZone(z)}>
-            {z}
+        Зоны с сервера:{" "}
+        {chips.map((z) => (
+          <button
+            key={z.zoneId}
+            type="button"
+            className="chip"
+            onClick={() => onZone(z.zoneId)}
+            title={z.name}
+          >
+            {z.zoneId}
+            {z.quarantine ? " · cut-off" : ""}
           </button>
         ))}
       </p>

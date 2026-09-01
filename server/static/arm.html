@@ -61,7 +61,7 @@
     <div>
       <h1>Живая ревизия — АРМ товароведа</h1>
       <div class="sub" id="meta">Загрузка…</div>
-      <div class="sub"><a class="link" href="http://localhost:5173" target="_blank">Открыть ТСД</a></div>
+      <div class="sub" id="tsdLinks"><a class="link" href="http://localhost:5173" target="_blank">ТСД localhost:5173</a></div>
     </div>
     <div class="actions">
       <button class="btn-sale" onclick="sale('DRL-18')">Пробить дрель на кассе</button>
@@ -104,6 +104,17 @@
   </main>
   <script>
     const API = "/hs/tsd/arm";
+
+    async function loadLinks() {
+      try {
+        const info = await fetch("/hs/tsd/info").then(r => r.json());
+        const urls = ["http://localhost:5173", "http://localhost:8000/tsd/"].concat(info.tsdLan || []);
+        const unique = [...new Set(urls)];
+        document.getElementById("tsdLinks").innerHTML = unique.map(u =>
+          `<a class="link" href="${u}" target="_blank">${u}</a>`
+        ).join(" · ");
+      } catch (_) { /* keep default */ }
+    }
 
     async function load() {
       const d = await fetch(API + "/dashboard").then(r => r.json());
@@ -219,6 +230,7 @@
       await fetch(API + "/reset", { method: "POST" });
       load();
     }
+    loadLinks();
     load();
     setInterval(load, 1500);
   </script>

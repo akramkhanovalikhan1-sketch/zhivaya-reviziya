@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
+import socket
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,6 +17,22 @@ TZ = timezone(timedelta(hours=5))
 
 def now() -> datetime:
     return datetime.now(TZ)
+
+
+def lan_tsd_urls() -> list[str]:
+    found: list[str] = []
+    try:
+        hostname = socket.gethostname()
+        for item in socket.getaddrinfo(hostname, None, socket.AF_INET):
+            ip = item[4][0]
+            if ip.startswith("127.") or ip.startswith("169.254."):
+                continue
+            url = f"http://{ip}:8000/tsd/"
+            if url not in found:
+                found.append(url)
+    except OSError:
+        pass
+    return found
 
 
 def parse_dt(value: str | None) -> datetime | None:
@@ -520,6 +537,33 @@ def finish_zone(body: FinishZoneIn):
 @app.get("/hs/tsd/ping")
 def ping():
     return {"ok": True, "time": now().isoformat(timespec="seconds")}
+
+
+@app.get("/hs/tsd/info")
+def info():
+    urls = lan_tsd_urls()
+    return {
+        "ok": True,
+        "service": "zhivaya-reviziya-mock",
+        "tsdLocal": "http://localhost:5173",
+        "tsdBuilt": "http://localhost:8000/tsd/",
+        "tsdLan": urls,
+    }
+
+
+@app.get("/hs/tsd/zones")
+def list_zones():
+    items = []
+    for z in db["zones"].values():
+        items.append(
+            {
+                "zoneId": z["zoneId"],
+                "name": z["name"],
+                "status": z["status"],
+                "quarantine": bool(z.get("quarantine")),
+            }
+        )
+    return {"ok": True, "zones": items}
 
 
 @app.get("/hs/tsd/sessionLines")

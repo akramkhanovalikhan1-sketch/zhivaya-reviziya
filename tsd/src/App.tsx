@@ -358,6 +358,17 @@ export default function App() {
   }, [baseUrl, session?.zoneId, session?.sessionNum, step]);
 
   useEffect(() => {
+    const nav = navigator as Navigator & { wakeLock?: { request: (type: "screen") => Promise<unknown> } };
+    if (!nav.wakeLock) return;
+    let released = false;
+    nav.wakeLock.request("screen").catch(() => undefined);
+    return () => {
+      released = true;
+      void released;
+    };
+  }, [step]);
+
+  useEffect(() => {
     trapRef.current?.focus();
   }, [step]);
 
@@ -419,6 +430,7 @@ export default function App() {
       )}
       {step === "zone" && (
         <ZoneScreen
+          baseUrl={baseUrl}
           zone={zoneInput}
           onZone={setZoneInput}
           busy={busy}

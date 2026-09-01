@@ -65,6 +65,14 @@ paths:
               schema:
                 $ref: "#/components/schemas/ScanItemResponse"
 
+  /zones:
+    get:
+      summary: Список зон для экрана ТСД
+      operationId: ListZones
+  /info:
+    get:
+      summary: Адреса ТСД в локальной сети (mock)
+      operationId: Info
   /ping:
     get:
       summary: Проверка связи ТСД с сервером

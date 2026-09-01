@@ -104,6 +104,13 @@ export const api = {
       base,
       `/hs/tsd/sessionLines?zoneId=${encodeURIComponent(zoneId)}&sessionNum=${sessionNum}`,
     ),
+  zones: (base: string) =>
+    getJson<{ ok: boolean; zones: { zoneId: string; name: string; status: string; quarantine?: boolean }[] }>(
+      base,
+      "/hs/tsd/zones",
+    ),
+  info: (base: string) =>
+    getJson<{ ok: boolean; tsdLocal?: string; tsdBuilt?: string; tsdLan?: string[] }>(base, "/hs/tsd/info"),
   undoLast: (base: string, zoneId: string, userId: string, sessionNum: number) =>
     postJson<{ ok: boolean; error?: string; message?: string; lines?: ScanLine[] }>(base, "/hs/tsd/undoLast", {
       zoneId,

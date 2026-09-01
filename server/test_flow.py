@@ -27,6 +27,8 @@ def get(path: str) -> dict:
 
 def main() -> None:
     post("/arm/reset")
+    zones = get("/zones")
+    assert zones["ok"] and any(z["zoneId"] == "S-01" for z in zones["zones"]), zones
     auth = post("/auth", {"barcode": "EMP-1001"})
     assert auth["ok"], auth
     start = post("/startZone", {"zoneId": "S-01", "userId": auth["userId"]})
