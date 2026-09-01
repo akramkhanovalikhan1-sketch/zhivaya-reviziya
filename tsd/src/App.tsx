@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type ScanLine, type StartZoneOk } from "./api";
+import { api, connectionHint, normalizeBaseUrl, type ScanLine, type StartZoneOk } from "./api";
 import { beepAlarm, beepOk } from "./audio";
 import { enqueueScan, flushQueue, readQueue } from "./queue";
 import { setScanHandler } from "./scanner";
@@ -33,7 +33,7 @@ const DEVICE_ID = localStorage.getItem("tsdDeviceId") || (() => {
 })();
 
 function defaultBase() {
-  const saved = localStorage.getItem("tsdServer");
+  const saved = normalizeBaseUrl(localStorage.getItem("tsdServer") || "");
   if (saved) return saved;
   if (location.port === "5173" || location.pathname.startsWith("/tsd")) return "";
   return `${location.protocol}//${location.hostname}:8000`;
@@ -122,7 +122,7 @@ export default function App() {
       setStep("zone");
     } catch {
       flash("alarm");
-      setError("Нет связи с сервером 1С");
+      setError(connectionHint(baseUrl));
     } finally {
       setBusy(false);
     }
@@ -175,7 +175,7 @@ export default function App() {
     } catch {
       flash("alarm");
       setOnline(false);
-      setError("Нет связи с сервером 1С");
+      setError(connectionHint(baseUrl));
     } finally {
       setBusy(false);
     }
@@ -264,7 +264,7 @@ export default function App() {
       setError("");
     } catch {
       flash("alarm");
-      setError("Нет связи с сервером 1С");
+      setError(connectionHint(baseUrl));
     } finally {
       setBusy(false);
     }
@@ -286,14 +286,19 @@ export default function App() {
     } catch {
       flash("alarm");
       setOnline(false);
-      setError("Нет связи с сервером 1С");
+      setError(connectionHint(baseUrl));
     } finally {
       setBusy(false);
     }
   }
 
   useEffect(() => {
-    localStorage.setItem("tsdServer", baseUrl);
+    const clean = normalizeBaseUrl(baseUrl);
+    if (clean !== baseUrl) {
+      setBaseUrl(clean);
+      return;
+    }
+    localStorage.setItem("tsdServer", clean);
   }, [baseUrl]);
 
   useEffect(() => {
@@ -315,17 +320,17 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!session || !online) return;
     let stop = false;
     const tick = async () => {
       if (stop || busy) return;
       try {
         await api.ping(baseUrl);
-        setOnline(true);
+        if (!stop) setOnline(true);
       } catch {
-        setOnline(false);
+        if (!stop) setOnline(false);
         return;
       }
+      if (!session) return;
       const flushed = await flushQueue(baseUrl);
       if (flushed.sent || flushed.left !== queued) setQueued(flushed.left);
       if (flushed.sent) {
@@ -339,7 +344,7 @@ export default function App() {
       stop = true;
       window.clearInterval(id);
     };
-  }, [baseUrl, session, online, busy, queued]);
+  }, [baseUrl, session, busy, queued]);
 
   useEffect(() => {
     if (!session || step !== "scan") return;

@@ -35,9 +35,20 @@ export default function AuthScreen({ baseUrl, onBaseUrl, busy, error, onSubmit }
           className="field small"
           value={baseUrl}
           onChange={(e) => onBaseUrl(e.target.value)}
-          placeholder="пусто = прокси Vite"
+          placeholder="пусто = этот компьютер"
         />
       </label>
+      <p className="hint">
+        На http://localhost:5173 поле должно быть пустым. Не пишите /tsd/ — это страница, не API.
+        {baseUrl ? (
+          <>
+            {" "}
+            <button type="button" className="chip" onClick={() => onBaseUrl("")}>
+              Очистить
+            </button>
+          </>
+        ) : null}
+      </p>
       <p className="demo">
         Демо-бейджи:{" "}
         {["EMP-1001", "EMP-1002", "EMP-1003"].map((c) => (

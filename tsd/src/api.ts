@@ -40,8 +40,36 @@ export type ScanFail = {
   message?: string;
 };
 
+/** Пусто = тот же origin (прокси Vite на :5173 или mock на /tsd/). */
+export function normalizeBaseUrl(raw: string): string {
+  let s = (raw || "").trim();
+  if (!s) return "";
+  if (/192\.168\.x\.x/i.test(s) || /example\.com/i.test(s)) return "";
+  s = s.replace(/\/+$/, "");
+  s = s.replace(/\/tsd$/i, "");
+  s = s.replace(/\/hs\/tsd$/i, "");
+  s = s.replace(/\/+$/, "");
+  return s;
+}
+
+export function connectionHint(raw: string): string {
+  if (/\/tsd/i.test(raw) || /192\.168\.x\.x/i.test(raw)) {
+    return "Неверный адрес сервера. Очистите поле «Сервер 1С / mock» (на :5173 оно должно быть пустым) и войдите снова.";
+  }
+  return "Нет связи с сервером 1С. На localhost:5173 оставьте поле сервера пустым.";
+}
+
 function join(base: string, path: string) {
-  return `${base.replace(/\/$/, "")}${path}`;
+  return `${normalizeBaseUrl(base)}${path}`;
+}
+
+async function readJson<T>(res: Response): Promise<T> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error("server_not_json");
+  }
 }
 
 export async function getJson<T>(baseUrl: string, path: string): Promise<T> {
@@ -49,7 +77,7 @@ export async function getJson<T>(baseUrl: string, path: string): Promise<T> {
   const t = setTimeout(() => ctrl.abort(), 8000);
   try {
     const res = await fetch(join(baseUrl, path), { signal: ctrl.signal });
-    return (await res.json()) as T;
+    return await readJson<T>(res);
   } finally {
     clearTimeout(t);
   }
@@ -65,7 +93,7 @@ export async function postJson<T>(baseUrl: string, path: string, body: unknown):
       body: JSON.stringify(body),
       signal: ctrl.signal,
     });
-    return (await res.json()) as T;
+    return await readJson<T>(res);
   } finally {
     clearTimeout(t);
   }
