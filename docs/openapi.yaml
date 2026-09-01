@@ -152,6 +152,13 @@ components:
         zoneId: { type: string, example: "S-01" }
         sessionNum: { type: integer, default: 0, description: "0 = сервер назначит сам" }
         userId: { type: string }
+        confirmRecheck:
+          type: boolean
+          default: false
+          description: >
+            Если зона закрыта или на перепроверке, первый вызов без этого флага
+            НЕ стартует сессию, а возвращает needsConfirm=true.
+            Повтор с confirmRecheck=true начинает новую сессию.
 
     StartZoneResponse:
       type: object
@@ -162,6 +169,7 @@ components:
         sessionNum: { type: integer }
         startTime: { type: string, format: date-time }
         recheck: { type: boolean }
+        needsConfirm: { type: boolean }
         previousUserName: { type: string }
         message: { type: string }
         error: { type: string }

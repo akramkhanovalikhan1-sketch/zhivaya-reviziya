@@ -11,4 +11,5 @@ venv/
 *.iml
 .DS_Store
 tsd/dist/
+tsd/tsconfig.tsbuildinfo
 server/*.db

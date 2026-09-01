@@ -34,7 +34,9 @@ body {
 }
 .brand { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .who { font-size: 18px; font-weight: 700; }
-.dev { font-size: 11px; color: var(--muted); }
+.dev { font-size: 11px; color: var(--muted); text-align: right; }
+.dot-on { color: #4ade80; }
+.dot-off { color: #f87171; }
 
 .screen { display: flex; flex-direction: column; gap: 12px; flex: 1; }
 .chip {

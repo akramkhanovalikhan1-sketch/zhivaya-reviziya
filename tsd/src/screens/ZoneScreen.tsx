@@ -35,7 +35,7 @@ export default function ZoneScreen({ zone, onZone, busy, error, onStart, onLogou
       {error && <div className="err">{error}</div>}
       <p className="demo">
         Демо-зоны:{" "}
-        {["S-01", "S-02", "S-03", "P-01", "P-02"].map((z) => (
+        {["S-01", "S-02", "S-03", "P-01", "P-02", "Q-RC"].map((z) => (
           <button key={z} type="button" className="chip" onClick={() => onZone(z)}>
             {z}
           </button>

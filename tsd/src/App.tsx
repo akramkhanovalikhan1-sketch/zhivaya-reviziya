@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api } from "./api";
+import { api, type StartZoneOk } from "./api";
 import { beepAlarm, beepOk } from "./audio";
+import { enqueueScan, flushQueue, readQueue } from "./queue";
 import { setScanHandler } from "./scanner";
 import AuthScreen from "./screens/AuthScreen";
 import ScanScreen from "./screens/ScanScreen";
@@ -15,6 +16,16 @@ export type Session = {
   startTime: string;
 };
 
+type Persisted = {
+  step: "auth" | "zone" | "scan";
+  userId: string;
+  userName: string;
+  zoneInput: string;
+  session: Session | null;
+};
+
+const STATE_KEY = "tsdState";
+
 const DEVICE_ID = localStorage.getItem("tsdDeviceId") || (() => {
   const id = "TSD-" + Math.random().toString(36).slice(2, 8).toUpperCase();
   localStorage.setItem("tsdDeviceId", id);
@@ -28,13 +39,25 @@ function defaultBase() {
   return `${location.protocol}//${location.hostname}:8000`;
 }
 
+function loadState(): Persisted | null {
+  try {
+    const raw = localStorage.getItem(STATE_KEY);
+    return raw ? (JSON.parse(raw) as Persisted) : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function App() {
+  const restored = useMemo(() => loadState(), []);
   const [baseUrl, setBaseUrl] = useState(defaultBase);
-  const [step, setStep] = useState<"auth" | "zone" | "scan">("auth");
-  const [userId, setUserId] = useState("");
-  const [userName, setUserName] = useState("");
-  const [zoneInput, setZoneInput] = useState("");
-  const [session, setSession] = useState<Session | null>(null);
+  const [step, setStep] = useState<"auth" | "zone" | "scan">(
+    restored?.step === "scan" && !restored.session ? "zone" : restored?.step || "auth",
+  );
+  const [userId, setUserId] = useState(restored?.userId || "");
+  const [userName, setUserName] = useState(restored?.userName || "");
+  const [zoneInput, setZoneInput] = useState(restored?.zoneInput || "");
+  const [session, setSession] = useState<Session | null>(restored?.session || null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [alarm, setAlarm] = useState(false);
@@ -43,6 +66,8 @@ export default function App() {
   const [lastQty, setLastQty] = useState(0);
   const [lastBarcode, setLastBarcode] = useState<string | null>(null);
   const [qtyInput, setQtyInput] = useState("1");
+  const [online, setOnline] = useState(navigator.onLine);
+  const [queued, setQueued] = useState(() => readQueue().length);
 
   const trapRef = useRef<HTMLInputElement>(null);
 
@@ -79,41 +104,52 @@ export default function App() {
     }
   }
 
+  function applyStartedZone(res: StartZoneOk) {
+    flash("ok");
+    setSession({
+      userId,
+      userName,
+      zoneId: res.zoneId,
+      zoneName: res.zoneName,
+      sessionNum: res.sessionNum,
+      startTime: res.startTime,
+    });
+    setLastName("Сканируйте товар");
+    setLastQty(0);
+    setLastBarcode(null);
+    setQtyInput("1");
+    setNotice(res.freezeUntil && res.message && !res.recheck ? res.message : "");
+    setOnline(true);
+    setStep("scan");
+  }
+
   async function startZone(zoneId: string) {
     if (busy || !zoneId.trim()) return;
     setBusy(true);
     setError("");
     try {
-      const res = await api.startZone(baseUrl, zoneId.trim(), userId);
-      if (!res.ok) {
+      const first = await api.startZone(baseUrl, zoneId.trim(), userId, 0, false);
+      if (!first.ok) {
         flash("alarm");
-        setError(res.message || "Не удалось стартовать зону");
+        setError(first.message || "Не удалось стартовать зону");
         return;
       }
-      if (res.recheck && res.message) {
-        const ok = window.confirm(res.message);
-        if (!ok) {
-          setBusy(false);
+      if (first.needsConfirm || (first.recheck && first.message)) {
+        const ok = window.confirm(first.message || "Начать перепроверку?");
+        if (!ok) return;
+        const confirmed = await api.startZone(baseUrl, zoneId.trim(), userId, 0, true);
+        if (!confirmed.ok) {
+          flash("alarm");
+          setError(confirmed.message || "Не удалось стартовать зону");
           return;
         }
+        applyStartedZone(confirmed);
+        return;
       }
-      flash("ok");
-      setSession({
-        userId,
-        userName,
-        zoneId: res.zoneId,
-        zoneName: res.zoneName,
-        sessionNum: res.sessionNum,
-        startTime: res.startTime,
-      });
-      setLastName("Сканируйте товар");
-      setLastQty(0);
-      setLastBarcode(null);
-      setQtyInput("1");
-      setNotice(res.freezeUntil && res.message && !res.recheck ? res.message : "");
-      setStep("scan");
+      applyStartedZone(first);
     } catch {
       flash("alarm");
+      setOnline(false);
       setError("Нет связи с сервером 1С");
     } finally {
       setBusy(false);
@@ -140,14 +176,29 @@ export default function App() {
         return;
       }
       flash("ok");
+      setOnline(true);
       setLastName(res.name);
       setLastQty((prev) => (lastBarcode === barcode ? prev + res.qty : res.qty));
       setLastBarcode(barcode);
       setQtyInput("1");
       if (res.warning === "duplicate_card" && res.message) setNotice(res.message);
+      const flushed = await flushQueue(baseUrl);
+      if (flushed.sent) setQueued(flushed.left);
     } catch {
-      flash("alarm");
-      setError("Нет связи с сервером 1С");
+      enqueueScan({
+        barcode,
+        qty,
+        zoneId: session.zoneId,
+        userId: session.userId,
+        sessionNum: session.sessionNum,
+        deviceId: DEVICE_ID,
+      });
+      setQueued(readQueue().length);
+      setOnline(false);
+      setLastName(barcode);
+      setLastQty((prev) => (lastBarcode === barcode ? prev + qty : qty));
+      setLastBarcode(barcode);
+      setNotice("Нет связи. Скан сохранён в очередь и уйдёт сам, когда сеть вернётся.");
     } finally {
       setBusy(false);
     }
@@ -192,6 +243,41 @@ export default function App() {
   }, [baseUrl]);
 
   useEffect(() => {
+    localStorage.setItem(
+      STATE_KEY,
+      JSON.stringify({ step, userId, userName, zoneInput, session } satisfies Persisted),
+    );
+  }, [step, userId, userName, zoneInput, session]);
+
+  useEffect(() => {
+    const up = () => setOnline(true);
+    const down = () => setOnline(false);
+    window.addEventListener("online", up);
+    window.addEventListener("offline", down);
+    return () => {
+      window.removeEventListener("online", up);
+      window.removeEventListener("offline", down);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!session || !online) return;
+    let stop = false;
+    const tick = async () => {
+      if (stop || busy) return;
+      const flushed = await flushQueue(baseUrl);
+      if (flushed.sent || flushed.left !== queued) setQueued(flushed.left);
+      if (flushed.lastName) setLastName(flushed.lastName);
+    };
+    void tick();
+    const id = window.setInterval(() => void tick(), 3000);
+    return () => {
+      stop = true;
+      window.clearInterval(id);
+    };
+  }, [baseUrl, session, online, busy, queued]);
+
+  useEffect(() => {
     trapRef.current?.focus();
   }, [step]);
 
@@ -234,7 +320,12 @@ export default function App() {
           <div className="brand">Живая ревизия</div>
           <div className="who">{header}</div>
         </div>
-        <div className="dev">{DEVICE_ID}</div>
+        <div className="dev">
+          <span className={online ? "dot-on" : "dot-off"}>{online ? "онлайн" : "оффлайн"}</span>
+          {queued > 0 ? ` · очередь ${queued}` : ""}
+          <br />
+          {DEVICE_ID}
+        </div>
       </header>
 
       {step === "auth" && (
@@ -271,6 +362,7 @@ export default function App() {
           busy={busy}
           error={error}
           notice={notice}
+          queued={queued}
           onApplyMultiplier={applyMultiplier}
           onSendScan={sendScan}
           onFinish={finishZone}

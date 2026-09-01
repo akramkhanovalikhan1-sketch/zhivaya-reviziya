@@ -10,6 +10,7 @@ type Props = {
   busy: boolean;
   error: string;
   notice: string;
+  queued: number;
   onApplyMultiplier: (total: number) => void;
   onSendScan: (barcode: string, qty: number) => void;
   onFinish: () => void;
@@ -24,6 +25,7 @@ export default function ScanScreen({
   busy,
   error,
   notice,
+  queued,
   onApplyMultiplier,
   onSendScan,
   onFinish,
@@ -91,6 +93,7 @@ export default function ScanScreen({
           </button>
         ))}
       </p>
+      {queued > 0 && <div className="warn">В очереди без сети: {queued} скан(ов). Уйдут сами.</div>}
       {notice && <div className="warn">{notice}</div>}
       {error && <div className="err">{error}</div>}
 

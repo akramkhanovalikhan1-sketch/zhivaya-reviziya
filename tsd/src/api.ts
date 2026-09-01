@@ -8,6 +8,7 @@ export type StartZoneOk = {
   sessionNum: number;
   startTime: string;
   recheck: boolean;
+  needsConfirm?: boolean;
   previousUserName?: string;
   freezeSku?: string;
   freezeUntil?: string;
@@ -54,11 +55,12 @@ export async function postJson<T>(baseUrl: string, path: string, body: unknown):
 export const api = {
   auth: (base: string, barcode: string) =>
     postJson<AuthOk | AuthFail>(base, "/hs/tsd/auth", { barcode }),
-  startZone: (base: string, zoneId: string, userId: string, sessionNum = 0) =>
+  startZone: (base: string, zoneId: string, userId: string, sessionNum = 0, confirmRecheck = false) =>
     postJson<StartZoneOk | StartZoneFail>(base, "/hs/tsd/startZone", {
       zoneId,
       userId,
       sessionNum,
+      confirmRecheck,
     }),
   scanItem: (
     base: string,

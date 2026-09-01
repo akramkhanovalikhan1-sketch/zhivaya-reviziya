@@ -32,6 +32,7 @@ class StartZoneIn(BaseModel):
     zoneId: str
     userId: str
     sessionNum: int = 0
+    confirmRecheck: bool = False
 
 
 class ScanItemIn(BaseModel):
@@ -344,6 +345,22 @@ def start_zone(body: StartZoneIn):
 
     recheck = zone["status"] in ("recheck", "closed")
     prev_name = zone.get("userName")
+    if recheck and not body.confirmRecheck:
+        return {
+            "ok": True,
+            "needsConfirm": True,
+            "recheck": True,
+            "zoneId": zone["zoneId"],
+            "zoneName": zone["name"],
+            "sessionNum": zone["sessionNum"],
+            "startTime": zone.get("startTime"),
+            "previousUserName": prev_name,
+            "message": (
+                f"Внимание, перепроверка! Аннулировать первый подсчет"
+                f"{' (' + prev_name + ')' if prev_name else ''}?"
+            ),
+        }
+
     if zone["sessionNum"]:
         archive_session(zone)
 
