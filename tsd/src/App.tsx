@@ -148,6 +148,25 @@ export default function App() {
     setStep("scan");
   }
 
+  async function resetDemo() {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const res = await api.resetDemo(baseUrl);
+      if (!res.ok) {
+        setError("Не удалось сбросить демо");
+        return;
+      }
+      setNotice("");
+      setLines([]);
+    } catch {
+      setError("Сброс есть только в mock. На АРМ откройте :8000 и нажмите «Сбросить демо».");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function startZone(zoneId: string) {
     if (busy || !zoneId.trim()) return;
     setBusy(true);
@@ -441,6 +460,7 @@ export default function App() {
           busy={busy}
           error={error}
           onStart={startZone}
+          onResetDemo={resetDemo}
           onLogout={() => {
             setStep("auth");
             setUserId("");

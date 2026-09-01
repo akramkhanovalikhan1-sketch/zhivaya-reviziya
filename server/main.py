@@ -536,7 +536,7 @@ def finish_zone(body: FinishZoneIn):
 
 @app.get("/hs/tsd/ping")
 def ping():
-    return {"ok": True, "time": now().isoformat(timespec="seconds")}
+    return {"ok": True, "time": now().isoformat(timespec="seconds"), "finalized": db["finalized"]}
 
 
 @app.get("/hs/tsd/info")

@@ -126,7 +126,8 @@ export const api = {
       userId,
       sessionNum,
     }),
-  ping: (base: string) => getJson<{ ok: boolean }>(base, "/hs/tsd/ping"),
+  ping: (base: string) => getJson<{ ok: boolean; finalized?: boolean }>(base, "/hs/tsd/ping"),
+  resetDemo: (base: string) => postJson<{ ok: boolean }>(base, "/hs/tsd/arm/reset", {}),
   sessionLines: (base: string, zoneId: string, sessionNum: number) =>
     getJson<{ ok: boolean; error?: string; message?: string; lines: ScanLine[] }>(
       base,

@@ -11,9 +11,10 @@ type Props = {
   error: string;
   onStart: (zoneId: string) => void;
   onLogout: () => void;
+  onResetDemo: () => void;
 };
 
-export default function ZoneScreen({ baseUrl, zone, onZone, busy, error, onStart, onLogout }: Props) {
+export default function ZoneScreen({ baseUrl, zone, onZone, busy, error, onStart, onLogout, onResetDemo }: Props) {
   const [zones, setZones] = useState<Zone[]>([]);
 
   useEffect(() => {
@@ -58,6 +59,11 @@ export default function ZoneScreen({ baseUrl, zone, onZone, busy, error, onStart
         {busy ? "СТАРТ…" : "НАЧАТЬ ПОДСЧЕТ"}
       </button>
       {error && <div className="err">{error}</div>}
+      {/закрыта актами/i.test(error) && (
+        <button className="btn btn-dark" type="button" disabled={busy} onClick={onResetDemo}>
+          Сбросить демо-ревизию
+        </button>
+      )}
       <p className="demo">
         Зоны с сервера:{" "}
         {chips.map((z) => (
