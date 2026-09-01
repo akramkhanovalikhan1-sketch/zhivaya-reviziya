@@ -110,7 +110,7 @@ export default function App() {
       setLastQty(0);
       setLastBarcode(null);
       setQtyInput("1");
-      setNotice("");
+      setNotice(res.freezeUntil && res.message && !res.recheck ? res.message : "");
       setStep("scan");
     } catch {
       flash("alarm");

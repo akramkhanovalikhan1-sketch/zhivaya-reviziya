@@ -9,6 +9,8 @@ export type StartZoneOk = {
   startTime: string;
   recheck: boolean;
   previousUserName?: string;
+  freezeSku?: string;
+  freezeUntil?: string;
   message?: string;
 };
 export type StartZoneFail = { ok: false; error?: string; message?: string };

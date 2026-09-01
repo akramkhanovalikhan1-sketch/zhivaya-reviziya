@@ -1,21 +1,27 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Literal
+from typing import Any
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from pathlib import Path
 
-MSK = timezone(timedelta(hours=5))  # Asia/Almaty / магазин
+TZ = timezone(timedelta(hours=5))
 
 
 def now() -> datetime:
-    return datetime.now(MSK)
+    return datetime.now(TZ)
+
+
+def parse_dt(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    return datetime.fromisoformat(value)
 
 
 class AuthIn(BaseModel):
@@ -47,7 +53,13 @@ class RecheckIn(BaseModel):
     zoneId: str
 
 
-ZoneStatus = Literal["idle", "active", "closed", "recheck"]
+class SaleIn(BaseModel):
+    sku: str
+    qty: float = 1
+
+
+class TransitIn(BaseModel):
+    document: str
 
 
 EMPLOYEES = {
@@ -56,7 +68,6 @@ EMPLOYEES = {
     "EMP-1003": {"id": "u-petrova", "name": "Петрова А.А."},
 }
 
-# Основной товар + дубль (кросс-код)
 PRODUCTS = {
     "4600000000017": {
         "sku": "DRL-18",
@@ -64,6 +75,7 @@ PRODUCTS = {
         "group": "Инструмент",
         "price": 8900,
         "main": "DRL-18",
+        "homeZone": "S-01",
     },
     "4600000000024": {
         "sku": "CMT-50",
@@ -71,6 +83,8 @@ PRODUCTS = {
         "group": "Сухие смеси",
         "price": 450,
         "main": "CMT-50",
+        "homeZone": "P-01",
+        "bulk": True,
     },
     "4600000000031": {
         "sku": "SCR-35",
@@ -78,6 +92,7 @@ PRODUCTS = {
         "group": "Крепеж",
         "price": 12,
         "main": "SCR-35",
+        "homeZone": "S-02",
     },
     "4600000000048": {
         "sku": "SCR-35-DUP",
@@ -85,6 +100,7 @@ PRODUCTS = {
         "group": "Крепеж",
         "price": 12,
         "main": "SCR-35",
+        "homeZone": "S-02",
         "duplicate": True,
     },
     "4600000000055": {
@@ -93,6 +109,7 @@ PRODUCTS = {
         "group": "Крепеж",
         "price": 12,
         "main": "SCR-45",
+        "homeZone": "S-02",
     },
     "4600000000062": {
         "sku": "BRK-1",
@@ -100,8 +117,12 @@ PRODUCTS = {
         "group": "Кладочные",
         "price": 28,
         "main": "BRK-1",
+        "homeZone": "P-02",
+        "bulk": True,
     },
 }
+
+SKU_META = {p["sku"]: p for p in PRODUCTS.values() if not p.get("duplicate")}
 
 PLAN_STOCK = {
     "DRL-18": 10,
@@ -115,11 +136,12 @@ ZONES = [
     {"zoneId": "S-01", "name": "Стеллаж 1 — инструмент"},
     {"zoneId": "S-02", "name": "Стеллаж 2 — крепеж"},
     {"zoneId": "S-03", "name": "Стеллаж 3 — смеси"},
-    {"zoneId": "P-01", "name": "Паллета P-01 цемент"},
-    {"zoneId": "P-02", "name": "Паллета P-02 кирпич"},
+    {"zoneId": "P-01", "name": "Паллета P-01 цемент", "freezeSku": "CMT-50"},
+    {"zoneId": "P-02", "name": "Паллета P-02 кирпич", "freezeSku": "BRK-1"},
     {"zoneId": "S-04", "name": "Стеллаж 4 — краски"},
     {"zoneId": "S-05", "name": "Стеллаж 5 — сантехника"},
     {"zoneId": "S-06", "name": "Стеллаж 6 — электрика"},
+    {"zoneId": "Q-RC", "name": "Карантин РЦ (cut-off)", "quarantine": True},
 ]
 
 
@@ -137,23 +159,38 @@ def empty_zone_state(z: dict) -> dict:
     }
 
 
-db = {
-    "zones": {z["zoneId"]: empty_zone_state(z) for z in ZONES},
-    "scans": [],  # history
-    "sales": [
-        # Чек ПОСЛЕ старта зоны — для демо формулы «временного сдвига»
-        # заполняется динамически при необходимости
-    ],
-    "transit_docs": [
-        {
-            "document": "Заказ на перемещение РЦ №4412",
-            "sku": "CMT-50",
-            "posted": False,
-            "days_ago": 2,
-        }
-    ],
-}
+def fresh_db() -> dict[str, Any]:
+    return {
+        "zones": {z["zoneId"]: empty_zone_state(z) for z in ZONES},
+        "scans": [],
+        "sales": [],
+        "sessions": [],
+        "freezes": {},
+        "offsets": [],
+        "finalized": False,
+        "acts": [],
+        "transit_docs": [
+            {
+                "id": "RC-4412",
+                "document": "Заказ на перемещение РЦ №4412",
+                "sku": "CMT-50",
+                "qty": 200,
+                "posted": False,
+                "days_ago": 2,
+            },
+            {
+                "id": "RC-4413",
+                "document": "Перемещение РЦ №4413 (машина ещё в пути)",
+                "sku": "BRK-1",
+                "qty": 500,
+                "posted": True,
+                "days_ago": 1,
+            },
+        ],
+    }
 
+
+db = fresh_db()
 
 app = FastAPI(title="Живая ревизия mock 1С")
 app.add_middleware(
@@ -188,10 +225,73 @@ def resolve_product(barcode: str) -> tuple[dict | None, bool]:
     if not p:
         return None, False
     if p.get("duplicate"):
-        main_sku = p["main"]
-        main = next(x for x in PRODUCTS.values() if x["sku"] == main_sku)
+        main = next(x for x in PRODUCTS.values() if x["sku"] == p["main"])
         return {**main, "duplicate_from": p["name"]}, True
     return p, False
+
+
+def archive_session(zone: dict) -> None:
+    if not zone.get("sessionNum") or not zone.get("startTime"):
+        return
+    key = (zone["zoneId"], zone["sessionNum"])
+    if any((s["zoneId"], s["sessionNum"]) == key for s in db["sessions"]):
+        return
+    fact = {}
+    for scan in db["scans"]:
+        if scan["zoneId"] == zone["zoneId"] and scan["sessionNum"] == zone["sessionNum"]:
+            fact[scan["sku"]] = fact.get(scan["sku"], 0) + scan["qty"]
+    db["sessions"].append(
+        {
+            "zoneId": zone["zoneId"],
+            "sessionNum": zone["sessionNum"],
+            "userId": zone["userId"],
+            "userName": zone["userName"],
+            "startTime": zone["startTime"],
+            "finishTime": zone.get("finishTime"),
+            "fact": fact,
+        }
+    )
+
+
+def freeze_sku(sku: str, minutes: int = 5) -> str:
+    until = now() + timedelta(minutes=minutes)
+    db["freezes"][sku] = until.isoformat(timespec="seconds")
+    return db["freezes"][sku]
+
+
+def active_freeze(sku: str) -> str | None:
+    raw = db["freezes"].get(sku)
+    if not raw:
+        return None
+    until = parse_dt(raw)
+    if until and until > now():
+        return raw
+    db["freezes"].pop(sku, None)
+    return None
+
+
+def sales_before(sku: str, ts: datetime) -> float:
+    return sum(s["qty"] for s in db["sales"] if s["sku"] == sku and parse_dt(s["time"]) and parse_dt(s["time"]) <= ts)
+
+
+def sales_after(sku: str, ts: datetime) -> float:
+    return sum(s["qty"] for s in db["sales"] if s["sku"] == sku and parse_dt(s["time"]) and parse_dt(s["time"]) > ts)
+
+
+def transit_cut(sku: str) -> float:
+    scanned = {s["sku"] for s in db["scans"]}
+    cut = 0.0
+    for doc in db["transit_docs"]:
+        if doc["sku"] == sku and doc["posted"] and doc["sku"] not in scanned:
+            cut += doc["qty"]
+    return cut
+
+
+def home_zone_for(sku: str) -> dict | None:
+    meta = SKU_META.get(sku)
+    if not meta:
+        return None
+    return db["zones"].get(meta.get("homeZone"))
 
 
 @app.post("/hs/tsd/auth")
@@ -208,12 +308,21 @@ def auth(body: AuthIn):
 
 @app.post("/hs/tsd/startZone")
 def start_zone(body: StartZoneIn):
-    zone = db["zones"].get(body.zoneId.strip().upper()) or db["zones"].get(body.zoneId.strip())
+    if db["finalized"]:
+        return {"ok": False, "error": "finalized", "message": "Ревизия уже закрыта актами"}
+
+    zid = body.zoneId.strip().upper()
+    zone = db["zones"].get(zid) or db["zones"].get(body.zoneId.strip())
     if zone is None:
-        # неизвестная зона — создаём на лету (пластиковый маркер P-xx)
-        zid = body.zoneId.strip().upper()
         zone = empty_zone_state({"zoneId": zid, "name": f"Зона {zid}"})
         db["zones"][zid] = zone
+
+    if zone.get("quarantine"):
+        return {
+            "ok": False,
+            "error": "quarantine",
+            "message": "Зона карантина РЦ. ТСД сюда не заходят до конца ревизии (правило cut-off).",
+        }
 
     user = employee_by_id(body.userId)
     if not user:
@@ -235,6 +344,9 @@ def start_zone(body: StartZoneIn):
 
     recheck = zone["status"] in ("recheck", "closed")
     prev_name = zone.get("userName")
+    if zone["sessionNum"]:
+        archive_session(zone)
+
     session = body.sessionNum if body.sessionNum else (zone["sessionNum"] or 0) + 1
     if session < 1:
         session = 1
@@ -247,12 +359,20 @@ def start_zone(body: StartZoneIn):
     zone["startTime"] = now().isoformat(timespec="milliseconds")
     zone["finishTime"] = None
 
+    freeze_until = None
+    freeze_sku_code = zone.get("freezeSku")
+    if freeze_sku_code:
+        freeze_until = freeze_sku(freeze_sku_code, 5)
+
     msg = None
     if recheck:
         msg = (
             f"Внимание, перепроверка! Аннулировать первый подсчет"
             f"{' (' + prev_name + ')' if prev_name else ''}?"
         )
+    elif freeze_until:
+        name = SKU_META[freeze_sku_code]["name"]
+        msg = f"Зона заморожена на 5 мин: {name}. Выписка на кассах заблокирована."
 
     return {
         "ok": True,
@@ -262,6 +382,8 @@ def start_zone(body: StartZoneIn):
         "startTime": zone["startTime"],
         "recheck": recheck,
         "previousUserName": prev_name,
+        "freezeSku": freeze_sku_code,
+        "freezeUntil": freeze_until,
         "message": msg,
     }
 
@@ -307,6 +429,10 @@ def scan_item(body: ScanItemIn):
         }
     )
 
+    extra = ""
+    if product.get("bulk"):
+        extra = " Крупногабарит: лучше калькулятор рядов."
+
     if is_dup:
         return {
             "ok": True,
@@ -325,7 +451,7 @@ def scan_item(body: ScanItemIn):
         "sku": product["sku"],
         "qty": body.qty,
         "warning": None,
-        "message": None,
+        "message": extra.strip() or None,
     }
 
 
@@ -342,7 +468,8 @@ def finish_zone(body: FinishZoneIn):
     zone["status"] = "closed"
     zone["color"] = "green"
     zone["finishTime"] = now().isoformat(timespec="milliseconds")
-    return {"ok": True, "message": f"Зона {zone['name']} закрыта"}
+    archive_session(zone)
+    return {"ok": True, "message": f"Зона {zone['name']} закрыта. Виртуальный замок включён."}
 
 
 @app.post("/hs/tsd/arm/recheck")
@@ -352,6 +479,7 @@ def recheck(body: RecheckIn):
         return {"ok": False, "error": "unknown_zone"}
     if zone["status"] != "closed":
         return {"ok": False, "error": "not_closed", "message": "Перепроверка только для закрытой зоны"}
+    archive_session(zone)
     zone["status"] = "recheck"
     zone["color"] = "orange"
     zone["blockedUserId"] = zone["userId"]
@@ -359,115 +487,257 @@ def recheck(body: RecheckIn):
 
 
 def fact_by_sku() -> dict[str, dict]:
-    """Факт ТСД по актуальной сессии каждой зоны + продажи после старта."""
-    # актуальная сессия зоны = текущий sessionNum
     result: dict[str, dict] = {}
     for sku, plan in PLAN_STOCK.items():
         result[sku] = {
             "sku": sku,
-            "name": next(p["name"] for p in PRODUCTS.values() if p["sku"] == sku),
-            "plan": plan,
+            "name": SKU_META[sku]["name"],
+            "plan": float(plan),
             "factTsd": 0.0,
             "soldAfterStart": 0.0,
+            "transitCut": 0.0,
+            "accountingAtStart": float(plan),
         }
 
     for scan in db["scans"]:
         zone = db["zones"].get(scan["zoneId"])
-        if not zone:
+        if not zone or scan["sessionNum"] != zone["sessionNum"]:
             continue
-        if scan["sessionNum"] != zone["sessionNum"]:
-            continue  # старые сессии — только аналитика, не в итог
         sku = scan["sku"]
         if sku not in result:
             result[sku] = {
                 "sku": sku,
-                "name": sku,
-                "plan": 0,
+                "name": SKU_META.get(sku, {}).get("name", sku),
+                "plan": 0.0,
                 "factTsd": 0.0,
                 "soldAfterStart": 0.0,
+                "transitCut": 0.0,
+                "accountingAtStart": 0.0,
             }
         result[sku]["factTsd"] += scan["qty"]
 
-    # демо-продажа дрели: если зона инструмента закрыта/активна — +1 после старта
-    tool_zone = db["zones"].get("S-01")
-    if tool_zone and tool_zone["startTime"] and "DRL-18" in result:
-        result["DRL-18"]["soldAfterStart"] = 1.0
+    for sku, row in result.items():
+        zone = home_zone_for(sku)
+        start = parse_dt(zone["startTime"]) if zone and zone.get("startTime") else None
+        cut = transit_cut(sku)
+        row["transitCut"] = cut
+        if start:
+            row["accountingAtStart"] = max(0.0, row["plan"] - sales_before(sku, start) - cut)
+            if zone["status"] in ("active", "closed", "recheck"):
+                row["soldAfterStart"] = sales_after(sku, start)
+        else:
+            row["accountingAtStart"] = max(0.0, row["plan"] - sum(s["qty"] for s in db["sales"] if s["sku"] == sku) - cut)
+            row["soldAfterStart"] = 0.0
 
-    for row in result.values():
-        row["adjustedFact"] = row["factTsd"] + row["soldAfterStart"]
-        row["deviation"] = row["adjustedFact"] - row["plan"]
+        offset = sum(o["qty"] for o in db["offsets"] if o["plusSku"] == sku) - sum(
+            o["qty"] for o in db["offsets"] if o["minusSku"] == sku
+        )
+        row["offset"] = offset
+        row["adjustedFact"] = row["factTsd"] + row["soldAfterStart"] + offset
+        row["deviation"] = row["adjustedFact"] - row["accountingAtStart"]
+        row["plan"] = row["accountingAtStart"]
     return result
 
 
-@app.get("/hs/tsd/arm/dashboard")
-def dashboard():
-    zones = list(db["zones"].values())
-    closed = sum(1 for z in zones if z["status"] == "closed")
-    total = len(zones)
-    lines = list(fact_by_sku().values())
-
-    # автозачет: одинаковая цена + группа, зеркальные отклонения
-    candidates = []
+def resorting_pairs(lines: list[dict]) -> tuple[list[dict], list[dict]]:
+    auto: list[dict] = []
+    manual: list[dict] = []
     by_group: dict[str, list] = {}
-    sku_meta = {p["sku"]: p for p in PRODUCTS.values() if not p.get("duplicate")}
     for row in lines:
-        meta = sku_meta.get(row["sku"])
-        if not meta:
-            continue
-        by_group.setdefault(meta["group"], []).append((row, meta))
+        meta = SKU_META.get(row["sku"])
+        if meta:
+            by_group.setdefault(meta["group"], []).append((row, meta))
+    used: set[tuple[str, str]] = set()
     for group, items in by_group.items():
         minus = [x for x in items if x[0]["deviation"] < 0]
         plus = [x for x in items if x[0]["deviation"] > 0]
         for m, mm in minus:
             for p, pm in plus:
-                if mm["price"] == pm["price"]:
-                    qty = min(-m["deviation"], p["deviation"])
-                    if qty > 0:
-                        candidates.append(
-                            {
-                                "a": m["name"],
-                                "b": p["name"],
-                                "qty": qty,
-                                "reason": f"Пересортица, группа «{group}», цена {mm['price']} ₸",
-                            }
-                        )
+                key = (m["sku"], p["sku"])
+                if key in used:
+                    continue
+                qty = min(-m["deviation"], p["deviation"])
+                if qty <= 0:
+                    continue
+                item = {
+                    "minusSku": m["sku"],
+                    "plusSku": p["sku"],
+                    "a": m["name"],
+                    "b": p["name"],
+                    "qty": qty,
+                    "auto": mm["price"] == pm["price"],
+                    "reason": (
+                        f"Автозачет, группа «{group}», цена {mm['price']} ₸"
+                        if mm["price"] == pm["price"]
+                        else f"Разная цена {mm['price']} / {pm['price']} ₸, разницу на издержки"
+                    ),
+                }
+                used.add(key)
+                (auto if item["auto"] else manual).append(item)
+    return auto, manual
+
+
+def comparison_report() -> list[dict]:
+    by_zone: dict[str, list] = {}
+    for s in db["sessions"]:
+        by_zone.setdefault(s["zoneId"], []).append(s)
+    rows = []
+    for zone_id, sessions in by_zone.items():
+        if len(sessions) < 2:
+            continue
+        first, last = sessions[0], sessions[-1]
+        skus = set(first["fact"]) | set(last["fact"])
+        for sku in sorted(skus):
+            rows.append(
+                {
+                    "zoneId": zone_id,
+                    "sku": sku,
+                    "name": SKU_META.get(sku, {}).get("name", sku),
+                    "firstUser": first["userName"],
+                    "firstQty": first["fact"].get(sku, 0),
+                    "secondUser": last["userName"],
+                    "secondQty": last["fact"].get(sku, 0),
+                    "delta": last["fact"].get(sku, 0) - first["fact"].get(sku, 0),
+                }
+            )
+    return rows
+
+
+@app.get("/hs/tsd/arm/dashboard")
+def dashboard():
+    work_zones = [z for z in db["zones"].values() if not z.get("quarantine")]
+    closed = sum(1 for z in work_zones if z["status"] == "closed")
+    total = len(work_zones)
+    lines = list(fact_by_sku().values())
+    auto, manual = resorting_pairs(lines)
 
     transit = []
+    scanned = {s["sku"] for s in db["scans"]}
     for doc in db["transit_docs"]:
-        fact = fact_by_sku().get(doc["sku"], {})
-        if fact.get("factTsd", 0) == 0:
+        if not doc["posted"]:
             transit.append(
                 {
                     "document": doc["document"],
+                    "id": doc["id"],
                     "sku": doc["sku"],
+                    "action": "post",
                     "message": f"Найден товар перемещения {doc['document']}. Провести документ?",
                 }
             )
+        elif doc["sku"] not in scanned:
+            transit.append(
+                {
+                    "document": doc["document"],
+                    "id": doc["id"],
+                    "sku": doc["sku"],
+                    "action": "cut",
+                    "message": f"{doc['document']}: ни одной позиции не сосканировано. Груз помечен как транзитный, {doc['qty']} шт вырезаны из остатка.",
+                }
+            )
+
+    freezes = []
+    for sku, until in list(db["freezes"].items()):
+        if active_freeze(sku):
+            freezes.append({"sku": sku, "name": SKU_META[sku]["name"], "until": until})
 
     return {
-        "canFinalize": closed == total and total > 0,
+        "canFinalize": closed == total and total > 0 and not db["finalized"],
+        "finalized": db["finalized"],
+        "acts": db["acts"],
         "coveragePercent": round(100 * closed / total, 1) if total else 0,
         "zones": [
             {
                 "zoneId": z["zoneId"],
                 "name": z["name"],
                 "status": z["status"],
-                "color": z["color"],
+                "color": "gray" if z.get("quarantine") and z["status"] == "idle" else z["color"],
                 "userName": z["userName"],
                 "sessionNum": z["sessionNum"],
                 "startTime": z["startTime"],
                 "finishTime": z["finishTime"],
+                "quarantine": bool(z.get("quarantine")),
             }
-            for z in zones
+            for z in db["zones"].values()
         ],
         "lines": lines,
-        "candidates": candidates,
+        "candidates": manual,
+        "autoOffset": auto,
+        "offsets": db["offsets"],
         "transitWarnings": transit,
+        "comparison": comparison_report(),
+        "freezes": freezes,
+        "sales": db["sales"][-8:],
     }
+
+
+@app.post("/hs/tsd/arm/sale")
+def sale(body: SaleIn):
+    sku = body.sku.strip().upper()
+    if sku not in SKU_META:
+        return {"ok": False, "error": "unknown_sku", "message": "Нет такого SKU"}
+    frozen = active_freeze(sku)
+    if frozen:
+        return {
+            "ok": False,
+            "error": "frozen",
+            "message": f"Товар заморожен до {frozen}. Касса не выписывает, пока ревизор не зафиксирует паллету.",
+        }
+    rec = {
+        "id": str(uuid4())[:8],
+        "sku": sku,
+        "name": SKU_META[sku]["name"],
+        "qty": body.qty,
+        "time": now().isoformat(timespec="milliseconds"),
+    }
+    db["sales"].append(rec)
+    return {"ok": True, "sale": rec}
+
+
+@app.post("/hs/tsd/arm/postTransit")
+def post_transit(body: TransitIn):
+    for doc in db["transit_docs"]:
+        if doc["id"] == body.document or doc["document"] == body.document:
+            doc["posted"] = True
+            return {"ok": True, "message": f"{doc['document']} проведён"}
+    return {"ok": False, "error": "not_found"}
+
+
+@app.post("/hs/tsd/arm/applyOffset")
+def apply_offset():
+    lines = list(fact_by_sku().values())
+    auto, _ = resorting_pairs(lines)
+    applied = 0
+    for item in auto:
+        db["offsets"].append(item)
+        applied += 1
+    return {"ok": True, "applied": applied, "message": f"Автозачет пересортицы: {applied} пар"}
+
+
+@app.post("/hs/tsd/arm/finalize")
+def finalize():
+    dash = dashboard()
+    if not dash["canFinalize"]:
+        return {"ok": False, "error": "not_ready", "message": "Акты закрыты, пока не зелёные все рабочие зоны"}
+    acts = []
+    for row in dash["lines"]:
+        if abs(row["deviation"]) < 0.001:
+            continue
+        kind = "списание" if row["deviation"] < 0 else "оприходование"
+        acts.append(
+            {
+                "kind": kind,
+                "sku": row["sku"],
+                "name": row["name"],
+                "qty": abs(row["deviation"]),
+            }
+        )
+    db["acts"] = acts
+    db["finalized"] = True
+    return {"ok": True, "acts": acts, "message": f"Сформировано актов: {len(acts)}"}
 
 
 @app.post("/hs/tsd/arm/reset")
 def reset_demo():
-    db["zones"] = {z["zoneId"]: empty_zone_state(z) for z in ZONES}
-    db["scans"] = []
+    global db
+    db = fresh_db()
     return {"ok": True}

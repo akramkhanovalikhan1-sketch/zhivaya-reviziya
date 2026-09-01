@@ -93,6 +93,27 @@ paths:
               schema:
                 $ref: "#/components/schemas/Dashboard"
 
+  /arm/sale:
+    post:
+      summary: Демо-чек ККМ (продажа после старта зоны)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sku]
+              properties:
+                sku: { type: string }
+                qty: { type: number, default: 1 }
+  /arm/postTransit:
+    post:
+      summary: Провести черновик перемещения РЦ
+  /arm/applyOffset:
+    post:
+      summary: Автозачет пересортицы с одинаковой ценой
+  /arm/finalize:
+    post:
+      summary: Финальные акты. Доступно только при 100% зелёных рабочих зон
   /arm/recheck:
     post:
       summary: Направить зону на перепроверку
